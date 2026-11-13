@@ -175,10 +175,186 @@ namespace MuMech.UI
 
             LowerThrottleLimit(w, p);
 
+            Precision(w, p);
+            PartControl(w, p);
+
             // while landing
             Layout running = KodeWindow.Panel(p);
             w.Visible(running.gameObject, () => Core.Landing != null && Core.Landing.Enabled);
             RunningLabels(w, running);
+        }
+
+        // ---- MechJeb2P: precision catch ----
+
+        MechJebModuleLandingAutopilot Landing => Core.Landing;
+
+        void Precision(KodeWindow w, UIObject p)
+        {
+            w.Section(p, "#MechJeb_LG2P_Section", false, s => //Precision catch (2P)
+            {
+                Toggle precision = w.Toggle(s, "#MechJeb_LG2P_PrecisionMode", () => Landing != null && Landing.PrecisionMode, v => //Precision terminal guidance
+                {
+                    if (Landing != null) { Landing.PrecisionMode = v; Landing.Dirty = true; }
+                });
+                Tooltips.Add(KodeWindow.RowOf(precision), "#MechJeb_LG2P_PrecisionMode_tooltip");
+
+                // catch point
+                Layout alt = EditUi.Row(w, s, "#MechJeb_LG2P_CatchAltitude", () => Landing?.CatchAltitudeASL, "m", 70); //Catch altitude (bottom, ASL):
+                Tooltips.Add(alt.gameObject, "#MechJeb_LG2P_CatchAltitude_tooltip");
+                Layout altButtons = KodeWindow.Row(s);
+                KodeWindow.Button(altButtons, "#MechJeb_LG2P_FromVessel", () => Landing?.SetCatchAltitudeFromVessel(), true); //From vessel
+                KodeWindow.Button(altButtons, "#MechJeb_LG2P_Terrain", () => Landing?.SetCatchAltitudeToTerrain(), true); //Terrain
+                UIButton here = KodeWindow.Button(s, "#MechJeb_LG2P_CatchPointHere", () => Landing?.SetCatchPointFromVessel(), true); //Catch point = here
+                Tooltips.Add(here.gameObject, "#MechJeb_LG2P_CatchPointHere_tooltip");
+                GuidanceUi.Enable(w, here, () => Landing != null && !Landing.Enabled && LandedOrSplashed);
+                string above = Localizer.Format("#MechJeb_LG2P_AboveTerrain", "{0}"); //<<1>> m above the terrain at the target
+                w.Wrap(w.BoundLabel(s, Memo.Of(() => Landing != null && HasPositionTarget ? Math.Round(Landing.CatchHeightAboveTerrain()) : double.NaN,
+                    h => double.IsNaN(h) ? "" : string.Format(above, h.ToString("F0"))), true));
+
+                // the descent
+                Layout take = EditUi.Row(w, s, "#MechJeb_LG2P_TerminalHeight", () => Landing?.TerminalHeight, "m", 60); //Take over at:
+                Tooltips.Add(take.gameObject, "#MechJeb_LG2P_TerminalHeight_tooltip");
+                EditUi.Row(w, s, "#MechJeb_LG2P_MaxDescentSpeed", () => Landing?.MaxDescentSpeed, "m/s", 60); //Max descent speed:
+                EditUi.Row(w, s, "#MechJeb_LG2P_MaxHorizontalSpeed", () => Landing?.MaxHorizontalSpeed, "m/s", 60); //Max horizontal speed:
+                Layout tilt = EditUi.Row(w, s, "#MechJeb_LG2P_MaxTilt", () => Landing?.MaxTilt, "°", 60); //Max tilt:
+                Tooltips.Add(tilt.gameObject, "#MechJeb_LG2P_MaxTilt_tooltip");
+                Layout capture = EditUi.Row(w, s, "#MechJeb_LG2P_CaptureSpeed", () => Landing?.CaptureSpeed, "m/s", 60); //Capture speed:
+                Tooltips.Add(capture.gameObject, "#MechJeb_LG2P_CaptureSpeed_tooltip");
+                EditUi.Row(w, s, "#MechJeb_LG2P_Tolerance", () => Landing?.HorizontalTolerance, "m", 60); //Centred within:
+                Toggle hover = w.Toggle(s, "#MechJeb_LG2P_HoverAtCatch", () => Landing != null && Landing.HoverAtCatch, v => //Hover at the catch altitude
+                {
+                    if (Landing != null) { Landing.HoverAtCatch = v; Landing.Dirty = true; }
+                });
+                Tooltips.Add(KodeWindow.RowOf(hover), "#MechJeb_LG2P_HoverAtCatch_tooltip");
+                EditUi.Row(w, s, "#MechJeb_LG2P_HoverTimeLimit", () => Landing?.HoverTimeLimit, "s", 60); //Hover time limit:
+
+                // heading
+                Toggle heading = w.Toggle(s, "#MechJeb_LG2P_HoldHeading", () => Landing != null && Landing.HoldHeading, v => //Hold heading
+                {
+                    if (Landing != null) { Landing.HoldHeading = v; Landing.Dirty = true; }
+                });
+                Tooltips.Add(KodeWindow.RowOf(heading), "#MechJeb_LG2P_HoldHeading_tooltip");
+                Layout headingRow = KodeWindow.Row(s);
+                EditUi.Field(w, headingRow, () => Landing?.CatchHeading, 60);
+                KodeWindow.Label(headingRow, "°");
+                KodeWindow.Button(headingRow, "#MechJeb_LG2P_UseCurrent", () => Landing?.SetHeadingFromVessel()); //Use current
+
+                // entry and braking
+                Toggle aero = w.Toggle(s, "#MechJeb_LG2P_AeroSteering", () => Landing != null && Landing.AeroSteering, v => //Aero steering during entry
+                {
+                    if (Landing != null) { Landing.AeroSteering = v; Landing.Dirty = true; }
+                });
+                Tooltips.Add(KodeWindow.RowOf(aero), "#MechJeb_LG2P_AeroSteering_tooltip");
+                EditUi.Row(w, s, "#MechJeb_LG2P_MaxAoA", () => Landing?.MaxAoA, "°", 60); //Max angle of attack:
+                Layout braking = EditUi.Row(w, s, "#MechJeb_LG2P_BrakingTilt", () => Landing?.BrakingMaxTilt, "°", 60); //Braking burn max tilt:
+                Tooltips.Add(braking.gameObject, "#MechJeb_LG2P_BrakingTilt_tooltip");
+
+                // remote flight
+                Toggle remote = w.Toggle(s, "#MechJeb_LG2P_Remote", () => Landing != null && Landing.RemoteControl, v => //Keep flying when not focused
+                {
+                    if (Landing != null) { Landing.RemoteControl = v; Landing.Dirty = true; }
+                });
+                Tooltips.Add(KodeWindow.RowOf(remote), "#MechJeb_LG2P_Remote_tooltip");
+                EditUi.Row(w, s, "#MechJeb_LG2P_RemoteRange", () => Landing?.RemoteRangeKm, "km", 60); //Load range:
+                Toggle warp = w.Toggle(s, "#MechJeb_LG2P_RemoteBlockWarp", () => Landing != null && Landing.RemoteBlockWarp, v => //Block time warp while flying unfocused
+                {
+                    if (Landing != null) { Landing.RemoteBlockWarp = v; Landing.Dirty = true; }
+                });
+                Tooltips.Add(KodeWindow.RowOf(warp), "#MechJeb_LG2P_RemoteBlockWarp_tooltip");
+
+                // presets
+                Layout presets = KodeWindow.Row(s);
+                UIButton sep = KodeWindow.Button(presets, "#MechJeb_LG2P_SepPreset", () => Landing?.SepCatchPreset(), true); //SEP catch preset
+                Tooltips.Add(sep.gameObject, "#MechJeb_LG2P_SepPreset_tooltip");
+                KodeWindow.Button(presets, "#MechJeb_LG2P_Defaults", () => //Stock behaviour
+                {
+                    if (Landing == null) return;
+                    Landing.PrecisionMode = false;
+                    Landing.AeroSteering = false;
+                    Landing.HoldHeading = false;
+                    Landing.BrakingMaxTilt.Val = 5.7;
+                    Landing.Dirty = true;
+                    Core.LandingParts?.ClearAll();
+                }, true);
+            }, "LG2P.Precision");
+        }
+
+        // ---- MechJeb2P: part options by phase ----
+
+        static readonly string[] _switchNames = { "#MechJeb_LG2P_Leave", "#MechJeb_LG2P_On", "#MechJeb_LG2P_Off" }; //Leave On Off
+
+        void PartControl(KodeWindow w, UIObject p)
+        {
+            w.Section(p, "#MechJeb_LG2P_PartsSection", false, s => //Part control (2P)
+            {
+                MechJebModuleLandingPartControl parts = Core.LandingParts;
+                if (parts == null) return;
+
+                Toggle enabled = w.Toggle(s, "#MechJeb_LG2P_PartsEnabled", () => parts.PartControlEnabled, v => //Set part options by landing phase
+                {
+                    parts.PartControlEnabled = v;
+                    parts.Dirty = true;
+                });
+                Tooltips.Add(KodeWindow.RowOf(enabled), "#MechJeb_LG2P_PartsEnabled_tooltip");
+                w.Toggle(s, "#MechJeb_LG2P_PartsRestore", () => parts.RestoreAfterLanding, v => //Restore the options after the landing
+                {
+                    parts.RestoreAfterLanding = v;
+                    parts.Dirty = true;
+                });
+
+                Phase(w, s, "#MechJeb_LG2P_PhaseEntry", parts.Entry, parts, "LG2P.Entry"); //Entry (deorbit, coast, atmosphere)
+                Phase(w, s, "#MechJeb_LG2P_PhaseBraking", parts.Braking, parts, "LG2P.Braking"); //Braking burn
+                Phase(w, s, "#MechJeb_LG2P_PhaseTerminal", parts.Terminal, parts, "LG2P.Terminal"); //Terminal descent
+
+                string last = Localizer.Format("#MechJeb_LG2P_LastApplied") + " "; //Last applied:
+                UIText applied = w.BoundLabel(s, Memo.Of(() => parts.LastApplied ?? "", a => last + a), true);
+                w.Wrap(applied);
+                w.Visible(applied, () => !string.IsNullOrEmpty(parts.LastApplied));
+            }, "LG2P.Parts");
+        }
+
+        void Phase(KodeWindow w, UIObject p, string title, LandingPhaseRules r, MechJebModuleLandingPartControl parts, string key)
+        {
+            w.Section(p, title, false, s =>
+            {
+                Switch(w, s, "#MechJeb_LG2P_FinsPitch", () => r.FinsPitch, v => r.FinsPitch = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_FinsYaw", () => r.FinsYaw, v => r.FinsYaw = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_FinsRoll", () => r.FinsRoll, v => r.FinsRoll = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_FinsDeploy", () => r.FinsDeploy, v => r.FinsDeploy = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_GimbalPitch", () => r.GimbalPitch, v => r.GimbalPitch = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_GimbalYaw", () => r.GimbalYaw, v => r.GimbalYaw = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_GimbalRoll", () => r.GimbalRoll, v => r.GimbalRoll = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_GimbalLock", () => r.GimbalLock, v => r.GimbalLock = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_Rcs", () => r.Rcs, v => r.Rcs = v, parts);
+                Switch(w, s, "#MechJeb_LG2P_Sas", () => r.Sas, v => r.Sas = v, parts);
+
+                Layout ag = KodeWindow.Row(s);
+                KodeWindow.Label(ag, "#MechJeb_LG2P_ActionGroup"); //Fire action group (0 = none):
+                EditFields.Field(w, ag, () => r.ActionGroup.ToString(), t =>
+                {
+                    if (int.TryParse(t, out int n)) { r.ActionGroup = Mathf.Clamp(n, 0, 10); parts.Dirty = true; }
+                }, 40, () => true);
+
+                Layout mode = KodeWindow.Row(s);
+                KodeWindow.Label(mode, "#MechJeb_LG2P_EngineMode"); //Engine mode:
+                EditFields.Field(w, mode, () => r.EngineMode ?? "", t =>
+                {
+                    r.EngineMode = t.Trim();
+                    parts.Dirty = true;
+                }, 110, () => true);
+                Tooltips.Add(mode.gameObject, "#MechJeb_LG2P_EngineMode_tooltip");
+            }, key);
+        }
+
+        void Switch(KodeWindow w, UIObject p, string label, Func<PartSwitch> get, Action<PartSwitch> set, MechJebModuleLandingPartControl parts)
+        {
+            Layout row = KodeWindow.Row(p);
+            KodeWindow.Label(row, label, true);
+            w.Segmented(row, _switchNames, () => (int)get(), i =>
+            {
+                set((PartSwitch)i);
+                parts.Dirty = true;
+            });
         }
 
         // ---- the parts both layouts share ----
@@ -328,6 +504,9 @@ namespace MuMech.UI
             });
             MechJebModuleThrustController t = Core.Thrust;
             ModernRows.MinThrottle(g, t, 50); //"Keep limited throttle over"
+
+            Precision(w, p);
+            PartControl(w, p);
 
             // while landing: the autopilot's state in a status bar
             Layout running = w.StatusBar(p, () => KodeWindow.Tone.Normal);

@@ -886,7 +886,9 @@ namespace MuMech
                 _pid.Reset();
                 _transPrevThrust = LastThrottle;
                 _tmodeChanged = false;
-                FlightInputHandler.SetNeutralControls();
+                // the input handler is the focused vessel's: a vessel flying unfocused (MechJeb2P) leaves the player's controls alone
+                if (Vessel.isActiveVessel)
+                    FlightInputHandler.SetNeutralControls();
             }
 
             // "Use RCS for rotation" off: the thrusters don't rotate the vessel, whether the pilot or the attitude controller (SmartASS and

@@ -38,6 +38,32 @@ namespace MuMech
 
             private bool _warpReady;
 
+            // the angle of attack flown now, for the status
+            private double _aoaDeg;
+
+            /// <summary>
+            /// MechJeb2P aero steering. Flying engines-first through the atmosphere, the body makes lift toward the side its
+            /// windward end (the engines) is turned to. The course correction says which way the landing site must move: the
+            /// engines go that way, so the nose (the control forward, held retrograde by the standard step) goes the other
+            /// way, by an angle of attack that grows with the correction and is capped at MaxAoA. The predictions do not see
+            /// this lift, so the loop is a proportional one on the predicted miss: as the miss closes, the angle goes to zero.
+            /// </summary>
+            private Vector3d AeroSteeringDirection()
+            {
+                Vector3d retrograde = -VesselState.SurfaceVelocity.normalized;
+                Vector3d correction = Core.Landing.ComputeCourseCorrection(true);
+                Vector3d side = Vector3d.Exclude(VesselState.SurfaceVelocity, correction);
+
+                const double FULL_DEFLECTION_DV = 20; // m/s of correction for the full angle of attack
+                double maxAoA = UtilMath.Deg2Rad * MechJebLib.Utils.Statics.Clamp(Core.Landing.MaxAoA, 0, 30);
+                double aoa = maxAoA * Math.Min(1, side.magnitude / FULL_DEFLECTION_DV);
+                _aoaDeg = UtilMath.Rad2Deg * aoa;
+
+                if (side.sqrMagnitude < 1e-6 || aoa < 1e-4) return retrograde;
+
+                return (Math.Cos(aoa) * retrograde - Math.Sin(aoa) * side.normalized).normalized;
+            }
+
             public override AutopilotStep OnFixedUpdate()
             {
                 Core.Thrust.ThrustOff();
@@ -82,6 +108,8 @@ namespace MuMech
                         Vector3d deltaV = Core.Landing.ComputeCourseCorrection(true);
                         Status += "\n" + Localizer.Format("#MechJeb_LandingGuidance_Status2",
                             deltaV.magnitude.ToString("F3")); //"Course correction DV: " +  + " m/s"
+                        if (Core.Landing.AeroSteering && VesselState.DragAcceleration >= 0.01)
+                            Status += "\n" + Localizer.Format("#MechJeb_LG2P_StatusAero", _aoaDeg.ToString("F1")); //Aero steering: <<1>>° angle of attack
                     }
                 }
 
@@ -109,6 +137,10 @@ namespace MuMech
                         decelerationStartAttitude += MainBody.getRFrmVel(Orbit.WorldPositionAtUT(decelerationStartTime));
                         decelerationStartAttitude = decelerationStartAttitude.normalized;
                         Core.Attitude.AttitudeTo(decelerationStartAttitude, AttitudeReference.INERTIAL, Core.Landing);
+                    }
+                    else if (Core.Landing.AeroSteering && Core.Landing.LandAtTarget && VesselState.SpeedSurface > 50)
+                    {
+                        Core.Attitude.AttitudeTo(AeroSteeringDirection(), AttitudeReference.INERTIAL, Core.Landing);
                     }
                     else
                     {

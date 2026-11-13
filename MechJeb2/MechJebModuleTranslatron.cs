@@ -178,7 +178,8 @@ namespace MuMech
                 switch (abort)
                 {
                     case AbortStage.THRUSTOFF:
-                        FlightInputHandler.SetNeutralControls();
+                        if (Vessel.isActiveVessel)
+                            FlightInputHandler.SetNeutralControls();
                         s.mainThrottle = 0;
                         abort = AbortStage.DECOUPLE;
                         break;

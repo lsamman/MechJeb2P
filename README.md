@@ -1,3 +1,59 @@
+# MechJeb2P
+
+**MechJeb 2P** ("P" for precision) is a fork of [MechJeb2](https://github.com/MuMech/MechJeb2) for landing boosters and
+ships precisely enough to be caught by a tower, as the Starship Expansion Project's Superheavy and Starship are. It adds to
+the Landing Guidance window, under two collapsible sections, and leaves every other part of MechJeb as upstream has it.
+
+## What 2P adds
+
+**Precision catch (2P)**
+
+- *Precision terminal guidance*: the standard final descent is replaced, from a chosen height above the catch point, by a
+  closed-loop controller that flies the vessel's lowest point onto the target coordinates at a *catch altitude*, slows to a
+  *capture speed*, and holds position there (hover) until KSP reports the vessel landed (resting in the tower's arms) or a
+  hover time limit runs out, after which it keeps sinking at the capture speed. Translation uses a limited thrust tilt
+  plus RCS; engines that cannot throttle down to a hover are pulsed.
+- *Catch point = here*: on the pad, sitting in the arms, one button takes the target coordinates, the catch altitude and
+  the catch heading from the vessel.
+- *Hold heading*: the vessel's top is kept on a compass heading during the terminal descent, so the catch pins face the arms.
+- *Aero steering*: during the atmospheric entry the vessel holds an angle of attack (up to a limit) toward the target, so
+  body lift moves the predicted landing site. For vehicles entering engines-first.
+- *Braking burn max tilt*: the tilt the braking burn may use to steer the landing site is a setting (upstream: 5.7°).
+- *Keep flying when not focused*: switch to the tower, open the chopsticks, and the landing goes on. While a landing with
+  this option runs, the vessel and its target keep load and physics ranges of 100 km (configurable) instead of KSP's
+  2.25 km, so the focus switch is a plain one and the booster stays in physics. A rails time warp started from the other
+  vessel is dropped. A small **MechJeb2P remote landings** window shows the unfocused vessel's status with Abort and
+  Switch-to buttons, even on a vessel without MechJeb.
+- *SEP catch preset* fills all of the above (and the part options below) for a Starship Expansion Project catch;
+  *Stock behaviour* turns 2P off again.
+
+**Part control (2P)**
+
+For each landing phase (entry, braking burn, terminal descent) the autopilot can set part options the way you would click
+them in the part windows: control surfaces' pitch / yaw / roll authority and deployment (grid fins, flaps, including the
+Starship Expansion Project's own control surfaces), engine gimbal pitch / yaw / roll and lock, RCS, SAS, a custom action
+group fired once, and an engine mode (the engineID of a SEP cluster mode such as `CenterThree`, or a stock multi-mode
+engine). The options the parts had before the landing are restored when it ends.
+
+## Using it for a tower catch
+
+1. On the pad, with the booster in the arms: Landing Guidance → Precision catch (2P) → **SEP catch preset**, then
+   **Catch point = here**. Set the engine modes per phase under Part control if you want MechJeb to switch the cluster.
+2. Fly the ascent and separation as usual. On the booster, set the target (the catch point is remembered per vessel type)
+   and press **Land at target**.
+3. Switch to the tower (`[` / `]`), work the chopsticks, and watch. The remote window shows the booster's status.
+4. The booster hovers at the catch altitude until the arms hold it (or the hover time limit passes).
+
+## Building
+
+The .NET SDK (8 or later) and a KSP install. Put your paths in `Directory.Build.props.user` (see
+`Directory.Build.props`), then `./deploy.sh` builds `MechJeb2` and `MechJeb2.UI` in Release and copies both into
+`GameData/MechJeb2/Plugins` of that install. `MechJeb2.UI.dll` draws every MechJeb window and must be present.
+
+Upstream's README follows.
+
+---
+
 # MechJeb2
 
 Anatid Robotics and Multiversal Mechatronics proudly presents the first flight assistant autopilot: MechJeb

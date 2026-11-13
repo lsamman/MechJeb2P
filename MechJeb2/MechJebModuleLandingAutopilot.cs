@@ -42,6 +42,171 @@ namespace MuMech
 
         private bool _stageToDrop;
 
+        // ---- MechJeb2P: precision terminal guidance, tower catch, aero steering and remote flight ----
+
+        private const int PASSES_2P = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL);
+
+        /// <summary>The precision terminal descent replaces the standard final descent when landing at a target.</summary>
+        [Persistent(pass = PASSES_2P)] public bool PrecisionMode;
+
+        /// <summary>Altitude above sea level (m) of the vessel's lowest point at the catch; the ground at the target when landing.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble CatchAltitudeASL = 0;
+
+        /// <summary>Height above the catch point (m) at which the precision descent takes over.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble TerminalHeight = 800;
+
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble MaxDescentSpeed = 40;
+
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble MaxHorizontalSpeed = 15;
+
+        /// <summary>Thrust tilt (°) the precision descent uses to translate.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble MaxTilt = 12;
+
+        /// <summary>Descent speed (m/s) through the catch window, and the touchdown speed of a precision landing.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble CaptureSpeed = 0.5;
+
+        /// <summary>Hold the catch altitude until caught, up to HoverTimeLimit seconds (0: no limit); off sinks straight through.</summary>
+        [Persistent(pass = PASSES_2P)] public bool HoverAtCatch = true;
+
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble HoverTimeLimit = 20;
+
+        /// <summary>Horizontal miss (m) within which the catch counts as centred.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble HorizontalTolerance = 1.5;
+
+        /// <summary>Keep the vessel's top (navball up) on CatchHeading during the terminal descent, so the catch pins face the arms.</summary>
+        [Persistent(pass = PASSES_2P)] public bool HoldHeading;
+
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble CatchHeading = 0;
+
+        /// <summary>Steer the entry with body lift: an angle of attack off retrograde toward the target, up to MaxAoA.</summary>
+        [Persistent(pass = PASSES_2P)] public bool AeroSteering;
+
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble MaxAoA = 5;
+
+        /// <summary>Thrust tilt (°) the braking burn may use to steer the landing site (MechJeb's own limit is 5.7°).</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble BrakingMaxTilt = 5.7;
+
+        /// <summary>Keep flying when the player switches to another vessel: the vessel and its target stay loaded within RemoteRangeKm.</summary>
+        [Persistent(pass = PASSES_2P)] public bool RemoteControl = true;
+
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble RemoteRangeKm = 100;
+
+        /// <summary>Drop a rails time warp the player starts while this vessel flies unfocused: on rails it would fall ballistically.</summary>
+        [Persistent(pass = PASSES_2P)] public bool RemoteBlockWarp = true;
+
+        public bool PrecisionActive => PrecisionMode && LandAtTarget;
+
+        /// <summary>Distance from the centre of mass down to the vessel's lowest point, along the local vertical.</summary>
+        public double BottomOffset => Math.Max(0, VesselState.AltitudeTrue - VesselState.AltitudeBottom);
+
+        /// <summary>Altitude above sea level of the vessel's lowest point.</summary>
+        public double BottomAltitudeASL => VesselState.AltitudeASL - BottomOffset;
+
+        public double HeightAboveCatch => BottomAltitudeASL - CatchAltitudeASL;
+
+        /// <summary>The catch point in world coordinates: the target coordinates at the catch altitude.</summary>
+        public Vector3d CatchPointWorld() => MainBody.GetWorldSurfacePosition(Core.Target.targetLatitude, Core.Target.targetLongitude, CatchAltitudeASL);
+
+        /// <summary>Height of the catch point above the terrain at the target.</summary>
+        public double CatchHeightAboveTerrain() =>
+            Core.Target.targetBody == null ? 0 : CatchAltitudeASL - Core.Target.targetBody.TerrainAltitude(Core.Target.targetLatitude, Core.Target.targetLongitude);
+
+        /// <summary>Sets the catch altitude from where the vessel's lowest point is now: sitting in the arms on the pad, or hovering at the catch height.</summary>
+        public void SetCatchAltitudeFromVessel()
+        {
+            CatchAltitudeASL.Val = Math.Round(BottomAltitudeASL, 1);
+            Dirty = true;
+        }
+
+        /// <summary>Sets the catch altitude to the terrain at the target: a precision landing on the ground.</summary>
+        public void SetCatchAltitudeToTerrain()
+        {
+            if (Core.Target.targetBody == null) return;
+            CatchAltitudeASL.Val = Math.Round(Core.Target.targetBody.TerrainAltitude(Core.Target.targetLatitude, Core.Target.targetLongitude), 1);
+            Dirty = true;
+        }
+
+        /// <summary>Compass heading (°) the vessel's top (navball up) points at now.</summary>
+        public double CurrentTopHeading()
+        {
+            Vector3d top = -Vessel.GetTransform().forward;
+            double heading = UtilMath.Rad2Deg * Math.Atan2(Vector3d.Dot(top, VesselState.East), Vector3d.Dot(top, VesselState.North));
+            return MechJebLib.Utils.Statics.Clamp360(heading);
+        }
+
+        public void SetHeadingFromVessel()
+        {
+            CatchHeading.Val = Math.Round(CurrentTopHeading(), 1);
+            Dirty = true;
+        }
+
+        /// <summary>Sets the target coordinates and the catch altitude from where the vessel stands now: on the pad, in the arms.</summary>
+        public void SetCatchPointFromVessel()
+        {
+            Core.Target.SetPositionTarget(MainBody, VesselState.Latitude, VesselState.Longitude);
+            SetCatchAltitudeFromVessel();
+            SetHeadingFromVessel();
+        }
+
+        /// <summary>The settings a Starship Expansion Project booster or ship catch wants.</summary>
+        public void SepCatchPreset()
+        {
+            PrecisionMode = true;
+            HoverAtCatch = true;
+            HoldHeading = true;
+            AeroSteering = true;
+            RemoteControl = true;
+            TerminalHeight.Val = 800;
+            MaxDescentSpeed.Val = 40;
+            MaxHorizontalSpeed.Val = 15;
+            MaxTilt.Val = 12;
+            CaptureSpeed.Val = 0.5;
+            HoverTimeLimit.Val = 20;
+            HorizontalTolerance.Val = 1.5;
+            MaxAoA.Val = 5;
+            BrakingMaxTilt.Val = 15;
+            DeployGears = false;
+            Core.LandingParts?.SepCatchPreset();
+            Dirty = true;
+        }
+
+        public static LandingPhase PhaseOf(AutopilotStep step)
+        {
+            switch (step)
+            {
+                case null:                 return LandingPhase.None;
+                case PrecisionDescent _:   return LandingPhase.Terminal;
+                case DecelerationBurn _:
+                case KillHorizontalVelocity _:
+                case FinalDescent _:       return LandingPhase.Braking;
+                default:                   return LandingPhase.Entry;
+            }
+        }
+
+        public LandingPhase CurrentPhase => PhaseOf(CurrentStep);
+
+        private void UpdatePartControlPhase()
+        {
+            if (Core.LandingParts == null || !Enabled) return;
+            Core.LandingParts.ApplyPhase(CurrentPhase);
+        }
+
+        // The precision descent takes over from the braking steps once low enough and slow enough sideways for its tilt limit
+        // to handle: the braking steps kill the rest of a fast horizontal speed first.
+        private void ConsiderPrecisionTakeover()
+        {
+            if (!PrecisionActive || CurrentStep == null || CurrentStep is PrecisionDescent) return;
+            if (!(CurrentStep is DecelerationBurn || CurrentStep is KillHorizontalVelocity || CurrentStep is FinalDescent)) return;
+            if (!PredictionReady && CurrentStep is DecelerationBurn) return;
+
+            if (HeightAboveCatch < Math.Max(50, TerminalHeight) && VesselState.SpeedSurfaceHorizontal < 2 * Math.Max(0.5, MaxHorizontalSpeed))
+            {
+                Core.Thrust.Tmode = MechJebModuleThrustController.TMode.OFF;
+                Core.Thrust.TransKillH = false;
+                SetStep(new PrecisionDescent(Core));
+            }
+        }
+
         // the jettison has to happen at normal speed
         public bool NearJettison => _stageToDrop && VesselState.AltitudeASL < MainBody.RealMaxAtmosphereAltitude() + 30000;
 
@@ -223,13 +388,18 @@ namespace MuMech
                     DeployLandingGears();
             }
 
+            ConsiderPrecisionTakeover();
+
             base.Drive(s);
+
+            UpdatePartControlPhase();
         }
 
         public override void OnFixedUpdate()
         {
             _vesselAverageDrag = VesselAverageDrag();
             base.OnFixedUpdate();
+            UpdatePartControlPhase();
             DeployParachutes();
             JettisonIfDue();
         }
@@ -238,10 +408,12 @@ namespace MuMech
         {
             Core.Attitude.Users.Add(this);
             Core.Thrust.Users.Add(this);
+            Core.LandingParts?.BeginLanding();
         }
 
         protected override void OnModuleDisabled()
         {
+            Core.LandingParts?.EndLanding();
             Core.Attitude.AttitudeDeactivate();
             _predictor.Users.Remove(this);
             _predictor.descentSpeedPolicy = null;
@@ -506,10 +678,14 @@ namespace MuMech
 
         public double DecelerationEndAltitude()
         {
+            // MechJeb2P: a catch point above the ground (a tower) moves the end of the braking burn up with it, so the precision
+            // descent gets its terminal height
+            double catchFloor = PrecisionActive ? CatchAltitudeASL + 0.5 * Math.Max(50, TerminalHeight) : double.NegativeInfinity;
+
             //if the atmosphere is thin, the deceleration burn should end
             //500 meters above the landing site to allow for a controlled final descent
             //MechJebCore.print("DecelerationEndAltitude Vacum " + (200 + LandingAltitude).ToString("F2"));
-            if (!UseAtmosphereToBrake()) return 200 + _landingAltitude;
+            if (!UseAtmosphereToBrake()) return Math.Max(200 + _landingAltitude, catchFloor);
 
             // if the atmosphere is thick, deceleration (meaning freefall through the atmosphere)
             // should end a safe height above the landing site in order to allow braking from terminal velocity
@@ -518,7 +694,7 @@ namespace MuMech
 
             //MechJebCore.print("DecelerationEndAltitude Atmo " + (2 * landingSiteDragLength + LandingAltitude).ToString("F2"));
             // under open chutes the drag length is a few metres: keep a margin for terrain above the prediction and for the engines' spool-up
-            return Math.Max(1.1 * landingSiteDragLength, MIN_ATMOSPHERE_DECELERATION_END) + _landingAltitude;
+            return Math.Max(Math.Max(1.1 * landingSiteDragLength, MIN_ATMOSPHERE_DECELERATION_END) + _landingAltitude, catchFloor);
         }
 
         //On planets with thick enough atmospheres, we shouldn't do a deceleration burn. Rather,

@@ -59,8 +59,10 @@ namespace MuMech
                 // it can stop the landing
                 if (!Core.Landing.Enabled) return null;
 
+                // MechJeb2P: the tilt the burn may use to steer the landing site is a setting (MechJeb's own 0.1 rad is its default)
+                double maxTilt = Core.Landing.PrecisionActive ? UtilMath.Deg2Rad * Math.Max(1, Core.Landing.BrakingMaxTilt) : 0.1;
                 double correctionAngle = courseCorrection.magnitude / (2.0 * VesselState.LimitedMaxThrustAcceleration);
-                correctionAngle = Math.Min(0.1, correctionAngle);
+                correctionAngle = Math.Min(maxTilt, correctionAngle);
                 desiredThrustVector = (desiredThrustVector + correctionAngle * courseCorrection.normalized).normalized;
 
                 if (Vector3d.Dot(VesselState.SurfaceVelocity, VesselState.Up) > 0
