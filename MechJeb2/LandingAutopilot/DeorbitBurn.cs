@@ -33,7 +33,7 @@ namespace MuMech
                 if (Orbit.ApA < MainBody.RealMaxAtmosphereAltitude())
                 {
                     Core.Thrust.ThrustOff();
-                    return new CourseCorrection(Core);
+                    return Core.Landing.CourseCorrectionStep();
                 }
 
                 //We aim for a trajectory that
@@ -100,7 +100,7 @@ namespace MuMech
 
                     if (deltaV.magnitude < 2.0)
                     {
-                        return new CourseCorrection(Core);
+                        return Core.Landing.CourseCorrectionStep();
                     }
 
                     Status = Localizer.Format("#MechJeb_LandingGuidance_Status7"); //"Doing high deorbit burn"

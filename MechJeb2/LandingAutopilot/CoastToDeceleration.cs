@@ -100,7 +100,7 @@ namespace MuMech
                             Core.Warp.MinimumWarp();
                             if (Core.Landing.RCSAdjustment)
                                 Core.RCS.Enabled = false;
-                            return new CourseCorrection(Core);
+                            return Core.Landing.CourseCorrectionStep();
                         }
                     }
                     else

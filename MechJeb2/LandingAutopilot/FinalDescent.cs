@@ -38,7 +38,7 @@ namespace MuMech
             {
                 if (Vessel.LandedOrSplashed)
                 {
-                    Core.Landing.StopLanding();
+                    Core.Landing.StopLanding("landed (KSP reports the vessel landed or splashed)");
                     return null;
                 }
 

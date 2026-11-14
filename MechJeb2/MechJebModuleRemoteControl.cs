@@ -35,7 +35,12 @@ namespace MuMech
 
         private readonly Dictionary<Vessel, VesselRanges> _stockRanges = new Dictionary<Vessel, VesselRanges>();
         private double _lastRangeKm = -1;
+        private double _lastScan = double.NegativeInfinity;
         private float _lastWarpMessage = float.NegativeInfinity;
+        private bool _wasFocused = true;
+
+        /// <summary>Grounded vessels this close (m) to the target coordinates are kept loadable too: the tower, the pad.</summary>
+        private const double GROUND_VESSEL_RADIUS = 20000;
 
         public bool Active { get; private set; }
 
@@ -53,6 +58,16 @@ namespace MuMech
                 {
                     Active = true;
                     if (!Flying.Contains(Core)) Flying.Add(Core);
+                    _wasFocused = Vessel.isActiveVessel;
+                    Core.Landing.Log?.Event("remote control on: load range " + Math.Max(5, Core.Landing.RemoteRangeKm).ToString("F0") + " km");
+                }
+
+                bool focused = Vessel.isActiveVessel;
+                if (focused != _wasFocused)
+                {
+                    _wasFocused = focused;
+                    Core.Landing.Log?.Event(focused ? "remote: vessel focused again" : "remote: flying unfocused, player on " + (FlightGlobals.ActiveVessel?.vesselName ?? "?") +
+                                                                                      (Vessel.packed ? " (PACKED: no physics!)" : ""));
                 }
 
                 KeepLoaded();
@@ -75,6 +90,27 @@ namespace MuMech
             Vessel target = Core.Target.Target?.GetVessel();
             if (target != null && target != Vessel && target.mainBody == Vessel.mainBody)
                 Extend(target, rangeKm, changed);
+
+            // the grounded vessels near the target coordinates (the tower when the target is a point on the pad, not the tower
+            // itself): scanned once a second, so a tower loaded later is caught too
+            if (changed || VesselState.Time - _lastScan > 1)
+            {
+                _lastScan = VesselState.Time;
+                if (Core.Target.SurfaceTargetExists(Vessel.mainBody))
+                {
+                    Vector3d targetPos = Vessel.mainBody.GetWorldSurfacePosition(Core.Target.targetLatitude, Core.Target.targetLongitude, 0);
+                    for (int i = 0; i < FlightGlobals.Vessels.Count; i++)
+                    {
+                        Vessel v = FlightGlobals.Vessels[i];
+                        if (v == null || v == Vessel || v == target || v.mainBody != Vessel.mainBody) continue;
+                        if (v.situation != Vessel.Situations.LANDED && v.situation != Vessel.Situations.PRELAUNCH && v.situation != Vessel.Situations.SPLASHED) continue;
+                        if (v.vesselType == VesselType.Debris || v.vesselType == VesselType.Flag || v.vesselType == VesselType.EVA) continue;
+                        Vector3d pos = v.mainBody.GetWorldSurfacePosition(v.latitude, v.longitude, 0);
+                        if (Vector3d.Distance(pos, targetPos) > GROUND_VESSEL_RADIUS) continue;
+                        Extend(v, rangeKm, changed);
+                    }
+                }
+            }
         }
 
         // KSP builds a vessel's ranges once from PhysicsGlobals when it is made: the object is replaced by one of ours and the stock
@@ -100,11 +136,11 @@ namespace MuMech
             float unload = load * 1.1f;
             var r = new VesselRanges(v.vesselRanges);
 
-            // in the air: never on rails while it can be loaded
-            r.flying = new VesselRanges.Situation(load, unload, load, load * 0.95f);
-            r.subOrbital = new VesselRanges.Situation(load, unload, load, load * 0.95f);
-            r.escaping = new VesselRanges.Situation(load, unload, load, load * 0.95f);
-            r.orbit = new VesselRanges.Situation(load, unload, load, load * 0.95f);
+            // in the air: never on rails while it is loaded (pack beyond the unload range, unpack as soon as loaded)
+            r.flying = new VesselRanges.Situation(load, unload, unload * 1.05f, load);
+            r.subOrbital = new VesselRanges.Situation(load, unload, unload * 1.05f, load);
+            r.escaping = new VesselRanges.Situation(load, unload, unload * 1.05f, load);
+            r.orbit = new VesselRanges.Situation(load, unload, unload * 1.05f, load);
 
             // on the ground (the tower): loaded from far, off rails well before the booster arrives
             r.landed = new VesselRanges.Situation(load, unload, Math.Max(r.landed.pack, 3000f), Math.Max(r.landed.unpack, 2500f));
@@ -119,8 +155,16 @@ namespace MuMech
             if (!Core.Landing.RemoteBlockWarp || Vessel.isActiveVessel) return;
             if (Vessel.LandedOrSplashed) return;
 
-            if (TimeWarp.WarpMode == TimeWarp.Modes.HIGH && TimeWarp.CurrentRateIndex > 0)
+            // a rails warp always (the vessel would fall ballistically with its engines frozen); any warp while the boostback
+            // burns or the precision descent flies, where the control loops want real physics ticks
+            AutopilotStep step = Core.Landing.CurrentStep;
+            bool critical = step is Landing.PrecisionDescent || (step is Landing.Boostback bb && bb.Burning);
+            bool rails = TimeWarp.WarpMode == TimeWarp.Modes.HIGH && TimeWarp.CurrentRateIndex > 0;
+            bool physicsWarp = TimeWarp.WarpMode == TimeWarp.Modes.LOW && TimeWarp.CurrentRateIndex > 0;
+
+            if (rails || (physicsWarp && critical))
             {
+                Core.Landing.Log?.Event("remote: dropped a " + (rails ? "rails" : "physics") + " warp of x" + TimeWarp.CurrentRate.ToString("F0"));
                 TimeWarp.SetRate(0, true);
                 if (Time.realtimeSinceStartup - _lastWarpMessage > 5f)
                 {
@@ -135,6 +179,8 @@ namespace MuMech
             Active = false;
             Flying.Remove(Core);
             _lastRangeKm = -1;
+            _lastScan = double.NegativeInfinity;
+            Core.Landing?.Log?.Event("remote control off: stock vessel ranges restored on " + _stockRanges.Count + " vessel(s)");
 
             foreach (KeyValuePair<Vessel, VesselRanges> kv in _stockRanges)
             {

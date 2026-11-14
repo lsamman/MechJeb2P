@@ -89,10 +89,31 @@ namespace MuMech
         /// <summary>Keep flying when the player switches to another vessel: the vessel and its target stay loaded within RemoteRangeKm.</summary>
         [Persistent(pass = PASSES_2P)] public bool RemoteControl = true;
 
-        [Persistent(pass = PASSES_2P)] public readonly EditableDouble RemoteRangeKm = 100;
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble RemoteRangeKm = 150;
 
         /// <summary>Drop a rails time warp the player starts while this vessel flies unfocused: on rails it would fall ballistically.</summary>
         [Persistent(pass = PASSES_2P)] public bool RemoteBlockWarp = true;
+
+        /// <summary>Write a CSV flight log of each landing under Logs/MechJeb2P in the KSP folder.</summary>
+        [Persistent(pass = PASSES_2P)] public bool FlightLog = true;
+
+        /// <summary>Throttle (fraction) held while the boostback turns the vessel around, so the gimbals have torque to turn with.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble BoostbackFlipThrottle = 0.05;
+
+        /// <summary>Drag acceleration (m/s²) above which the boostback stands down and the entry is flown as it is.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble BoostbackMaxDrag = 1.0;
+
+        /// <summary>Predicted miss (m) within which the boostback is done and the coast begins.</summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble BoostbackDoneMiss = 100;
+
+        /// <summary>
+        /// Thrust left after the terminal phase's engine mode switch, as a fraction of the thrust before it (3 of 13 engines:
+        /// 0.23). The switch waits until the braking still to do fits that thrust. 1 = no reduction.
+        /// </summary>
+        [Persistent(pass = PASSES_2P)] public readonly EditableDouble TerminalThrustFraction = 1;
+
+        public FlightLog2P Log { get; private set; }
+        private string _stopReason;
 
         public bool PrecisionActive => PrecisionMode && LandAtTarget;
 
@@ -157,7 +178,7 @@ namespace MuMech
             AeroSteering = true;
             RemoteControl = true;
             TerminalHeight.Val = 800;
-            MaxDescentSpeed.Val = 40;
+            MaxDescentSpeed.Val = 60;
             MaxHorizontalSpeed.Val = 15;
             MaxTilt.Val = 12;
             CaptureSpeed.Val = 0.5;
@@ -165,6 +186,12 @@ namespace MuMech
             HorizontalTolerance.Val = 1.5;
             MaxAoA.Val = 5;
             BrakingMaxTilt.Val = 15;
+            BoostbackFlipThrottle.Val = 0.05;
+            BoostbackMaxDrag.Val = 1.0;
+            BoostbackDoneMiss.Val = 100;
+            TerminalThrustFraction.Val = 0.25; // the preset's braking mode is 13 engines, its terminal mode 3
+            RemoteRangeKm.Val = 150;
+            FlightLog = true;
             DeployGears = false;
             Core.LandingParts?.SepCatchPreset();
             Dirty = true;
@@ -175,6 +202,7 @@ namespace MuMech
             switch (step)
             {
                 case null:                 return LandingPhase.None;
+                case Boostback _:          return LandingPhase.Entry;
                 case PrecisionDescent _:   return LandingPhase.Terminal;
                 case DecelerationBurn _:
                 case KillHorizontalVelocity _:
@@ -185,22 +213,51 @@ namespace MuMech
 
         public LandingPhase CurrentPhase => PhaseOf(CurrentStep);
 
+        // The part options follow the phase. The engine modes are the exception: the braking phase's mode goes on when the coast
+        // to the braking burn begins, because the burn's timing is computed from the engines that are running during the coast
+        // (switching at the burn's start to fewer engines than it was planned with would leave it unable to stop); and the
+        // terminal phase's mode goes on only once the precision descent finds the braking still to do fits the thrust that
+        // remains after the switch (TerminalThrustFraction).
         private void UpdatePartControlPhase()
         {
             if (Core.LandingParts == null || !Enabled) return;
-            Core.LandingParts.ApplyPhase(CurrentPhase);
+            LandingPhase phase = CurrentPhase;
+            Core.LandingParts.ApplyPhase(phase);
+
+            if (phase == LandingPhase.Entry && !(CurrentStep is CoastToDeceleration))
+                Core.LandingParts.ApplyEngineMode(LandingPhase.Entry);
+            else if (phase == LandingPhase.Braking || CurrentStep is CoastToDeceleration)
+                Core.LandingParts.ApplyEngineMode(LandingPhase.Braking);
+            else if (phase == LandingPhase.Terminal && CurrentStep is PrecisionDescent pd && pd.TerminalEnginesReady)
+                Core.LandingParts.ApplyEngineMode(LandingPhase.Terminal);
         }
 
-        // The precision descent takes over from the braking steps once low enough and slow enough sideways for its tilt limit
-        // to handle: the braking steps kill the rest of a fast horizontal speed first.
+        /// <summary>The step that steers the landing site after the deorbit: the boostback in precision mode, MechJeb's course correction otherwise.</summary>
+        public AutopilotStep CourseCorrectionStep() => PrecisionActive ? (AutopilotStep)new Boostback(Core) : new CourseCorrection(Core);
+
+        // The precision descent takes over from the braking steps once below TerminalHeight and the braking still to do fits
+        // its descent profile (the braking burn, a near-suicide burn with a big cluster, may still be fast at that height), or
+        // whatever the state once below a quarter of that height, where the standard steps would be flying to the ground.
         private void ConsiderPrecisionTakeover()
         {
             if (!PrecisionActive || CurrentStep == null || CurrentStep is PrecisionDescent) return;
-            if (!(CurrentStep is DecelerationBurn || CurrentStep is KillHorizontalVelocity || CurrentStep is FinalDescent)) return;
-            if (!PredictionReady && CurrentStep is DecelerationBurn) return;
+            if (!(CurrentStep is DecelerationBurn || CurrentStep is KillHorizontalVelocity || CurrentStep is FinalDescent || CurrentStep is CoastToDeceleration)) return;
 
-            if (HeightAboveCatch < Math.Max(50, TerminalHeight) && VesselState.SpeedSurfaceHorizontal < 2 * Math.Max(0.5, MaxHorizontalSpeed))
+            double terminal = Math.Max(50, TerminalHeight);
+            double h = HeightAboveCatch;
+            if (h >= terminal) return;
+
+            double g = VesselState.LocalGravity;
+            double aMax = VesselState.ThrustVectorMaxThrottle.magnitude / VesselState.Mass;
+            if (VesselState.LimitedMaxThrustAcceleration > 0 && VesselState.LimitedMaxThrustAcceleration < aMax) aMax = VesselState.LimitedMaxThrustAcceleration;
+            double vZ = VesselState.SpeedVertical;
+            double aReq = g + (vZ < 0 ? vZ * vZ / (2 * Math.Max(h, 1)) : 0); // to stop at the catch altitude from here
+            bool fits = aReq < 0.6 * aMax && VesselState.SpeedSurfaceHorizontal < 60;
+
+            if (fits || h < 0.25 * terminal)
             {
+                Log?.Event("precision descent takes over from " + CurrentStep.GetType().Name + ": h " + h.ToString("F0") + " m, vZ " + vZ.ToString("F1") + " m/s, vH " +
+                           VesselState.SpeedSurfaceHorizontal.ToString("F1") + " m/s, needs " + aReq.ToString("F1") + " of " + aMax.ToString("F1") + " m/s2" + (fits ? "" : " (forced: low)"));
                 Core.Thrust.Tmode = MechJebModuleThrustController.TMode.OFF;
                 Core.Thrust.TransKillH = false;
                 SetStep(new PrecisionDescent(Core));
@@ -299,6 +356,7 @@ namespace MuMech
         public MechJebModuleLandingAutopilot(MechJebCore core)
             : base(core)
         {
+            Log = new FlightLog2P(this);
         }
 
         public override void OnStart(PartModule.StartState state) => _predictor = Core.GetComputerModule<MechJebModuleLandingPredictions>();
@@ -328,11 +386,14 @@ namespace MuMech
             _parachutePlan.StartPlanning();
 
             if (Orbit.PeA < 0)
-                SetStep(new CourseCorrection(Core));
+                SetStep(CourseCorrectionStep());
             else if (UseLowDeorbitStrategy())
                 SetStep(new PlaneChange(Core));
             else
                 SetStep(new DeorbitBurn(Core));
+
+            _stopReason = null;
+            if (FlightLog) Log.Begin("land at target" + (PrecisionMode ? " (precision mode)" : ""));
         }
 
         public void LandUntargeted(object controller)
@@ -351,10 +412,19 @@ namespace MuMech
             _parachutePlan.StartPlanning();
 
             SetStep(new UntargetedDeorbit(Core));
+
+            _stopReason = null;
+            if (FlightLog) Log.Begin("land somewhere");
         }
 
-        public void StopLanding()
+        public void StopLanding(string reason = "stopped by the player or another module")
         {
+            if (Enabled && _stopReason == null)
+            {
+                _stopReason = reason;
+                Log?.Event("landing stopped: " + reason);
+            }
+
             Users.Clear();
             Core.Thrust.ThrustOff();
             Core.Thrust.Users.Remove(this);
@@ -363,7 +433,7 @@ namespace MuMech
             SetStep(null);
         }
 
-        protected override void StopAfterStepFailures() => StopLanding();
+        protected override void StopAfterStepFailures() => StopLanding("the step kept throwing exceptions (see KSP.log)");
 
         public override void Drive(FlightCtrlState s)
         {
@@ -393,6 +463,7 @@ namespace MuMech
             base.Drive(s);
 
             UpdatePartControlPhase();
+            Log?.Sample(s);
         }
 
         public override void OnFixedUpdate()
@@ -413,6 +484,8 @@ namespace MuMech
 
         protected override void OnModuleDisabled()
         {
+            Log?.End(_stopReason ?? "landing module disabled");
+            _stopReason = null;
             Core.LandingParts?.EndLanding();
             Core.Attitude.AttitudeDeactivate();
             _predictor.Users.Remove(this);
@@ -440,7 +513,7 @@ namespace MuMech
             // always rises again)
             if ((Orbit.eccentricity < 1 && endRadius > Orbit.ApR) || Vessel.LandedOrSplashed)
             {
-                StopLanding();
+                StopLanding(Vessel.LandedOrSplashed ? "landed (KSP reports the vessel landed or splashed)" : "the orbit never rises above the braking end radius: seems already landed");
                 return Vector3d.zero;
             }
 

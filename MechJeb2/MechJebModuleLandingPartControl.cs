@@ -124,6 +124,9 @@ namespace MuMech
 
         public LandingPhase AppliedPhase { get; private set; } = LandingPhase.None;
 
+        /// <summary>The phase whose engine mode is on the engines; the landing autopilot times the engine switches itself.</summary>
+        public LandingPhase EngineModePhase { get; private set; } = LandingPhase.None;
+
         /// <summary>A short account of what the last phase changed, for the window.</summary>
         public string LastApplied { get; private set; } = "";
 
@@ -149,6 +152,7 @@ namespace MuMech
         {
             ForgetSnapshot();
             AppliedPhase = LandingPhase.None;
+            EngineModePhase = LandingPhase.None;
             LastApplied = "";
         }
 
@@ -180,6 +184,7 @@ namespace MuMech
         }
 
         /// <summary>Applies the rules of a phase once, when the autopilot enters it.</summary>
+        /// <summary>Puts a phase's options (all but its engine mode) on the parts, once per phase.</summary>
         public void ApplyPhase(LandingPhase phase)
         {
             if (phase == AppliedPhase) return;
@@ -192,7 +197,7 @@ namespace MuMech
 
             try
             {
-                Apply(rules);
+                Apply(rules, false);
             }
             catch (Exception e)
             {
@@ -200,7 +205,49 @@ namespace MuMech
             }
         }
 
-        private void Apply(LandingPhaseRules r)
+        /// <summary>Selects a phase's engine mode, once per phase; the autopilot calls it when the switch is safe.</summary>
+        public void ApplyEngineMode(LandingPhase phase)
+        {
+            if (phase == EngineModePhase) return;
+            EngineModePhase = phase;
+
+            if (!PartControlEnabled || phase == LandingPhase.None) return;
+
+            LandingPhaseRules rules = Rules(phase);
+            if (rules == null || string.IsNullOrEmpty(rules.EngineMode)) return;
+
+            try
+            {
+                int engines = 0;
+                for (int i = 0; i < Vessel.parts.Count; i++)
+                {
+                    Part p = Vessel.parts[i];
+                    for (int j = 0; j < p.Modules.Count; j++)
+                    {
+                        PartModule m = p.Modules[j];
+                        if (m == null) continue;
+                        if (m is MultiModeEngine mme)
+                        {
+                            if (ApplyMultiMode(mme, rules)) engines++;
+                        }
+                        else if (m.GetType().Name == "ModuleSEPEngineSwitch" && ApplySepEngineSwitch(m, rules))
+                        {
+                            engines++;
+                        }
+                    }
+                }
+
+                string text = phase + " engine mode '" + rules.EngineMode + "': " + (engines > 0 ? engines + " engine module(s) switched" : "no engine has that mode");
+                LastApplied = text;
+                Core.Landing?.Log?.Event("part control: " + text);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError("[MechJeb2P] part control: the " + phase + " engine mode threw: " + e);
+            }
+        }
+
+        private void Apply(LandingPhaseRules r, bool includeEngines)
         {
             int surfaces = 0, gimbals = 0, engines = 0;
 
@@ -221,13 +268,13 @@ namespace MuMech
                             if (ApplyGimbal(g, r)) gimbals++;
                             break;
                         case MultiModeEngine mme:
-                            if (ApplyMultiMode(mme, r)) engines++;
+                            if (includeEngines && ApplyMultiMode(mme, r)) engines++;
                             break;
                         default:
                             // the control surfaces of other mods (Starship Expansion Project's flaps): the same field names as stock
                             if (m.GetType().Name.IndexOf("ControlSurface", StringComparison.Ordinal) >= 0 && ApplySurfaceByReflection(m, r))
                                 surfaces++;
-                            else if (m.GetType().Name == "ModuleSEPEngineSwitch" && ApplySepEngineSwitch(m, r))
+                            else if (includeEngines && m.GetType().Name == "ModuleSEPEngineSwitch" && ApplySepEngineSwitch(m, r))
                                 engines++;
                             break;
                     }
@@ -251,9 +298,10 @@ namespace MuMech
             if (r.ActionGroup >= 1 && r.ActionGroup <= 10)
                 Vessel.ActionGroups.ToggleGroup(CustomGroup(r.ActionGroup));
 
-            LastApplied = AppliedPhase + ": " + surfaces + " control surfaces, " + gimbals + " gimbals, " + engines + " engine modes" +
+            LastApplied = AppliedPhase + ": " + surfaces + " control surfaces, " + gimbals + " gimbals" + (includeEngines ? ", " + engines + " engine modes" : "") +
+                          (r.Rcs != PartSwitch.Leave ? ", RCS " + r.Rcs : "") + (r.Sas != PartSwitch.Leave ? ", SAS " + r.Sas : "") +
                           (r.ActionGroup > 0 ? ", action group " + r.ActionGroup : "");
-            Debug.Log("[MechJeb2P] part control " + LastApplied);
+            Core.Landing?.Log?.Event("part control " + LastApplied);
         }
 
         public static KSPActionGroup CustomGroup(int n)
@@ -464,15 +512,20 @@ namespace MuMech
         /// A Starship Expansion Project booster or ship coming back to the tower: grid fins (or flaps) on every axis for the
         /// entry, the gimbals free for the braking burn with the fins still trimming pitch and yaw, and in the last metres
         /// the fins' roll off (at low speed they only stir the roll the gimbals and RCS are holding) with RCS on for the fine
-        /// translation. The engine modes are left for the player: the cluster mode names differ between booster versions.
+        /// translation. The engine modes are the BL-3 booster's: the whole cluster for the boostback, the 13 inner engines
+        /// (MiddleEight) for the braking burn and the centre three for the catch; a cluster without those mode names keeps
+        /// its engines as they are.
         /// </summary>
         public void SepCatchPreset()
         {
             Entry.Clear();
             Entry.FinsPitch = Entry.FinsYaw = Entry.FinsRoll = PartSwitch.On;
-            Entry.GimbalLock = PartSwitch.Leave;
+            Entry.GimbalPitch = Entry.GimbalYaw = Entry.GimbalRoll = PartSwitch.On;
+            Entry.GimbalLock = PartSwitch.Off;
+            Entry.EngineMode = "OuterTwenty";
 
             Braking.Clear();
+            Braking.EngineMode = "MiddleEight";
             Braking.FinsPitch = Braking.FinsYaw = PartSwitch.On;
             Braking.FinsRoll = PartSwitch.On;
             Braking.GimbalPitch = Braking.GimbalYaw = Braking.GimbalRoll = PartSwitch.On;
@@ -486,6 +539,7 @@ namespace MuMech
             Terminal.GimbalLock = PartSwitch.Off;
             Terminal.Rcs = PartSwitch.On;
             Terminal.Sas = PartSwitch.Off;
+            Terminal.EngineMode = "CenterThree";
             Dirty = true;
         }
 

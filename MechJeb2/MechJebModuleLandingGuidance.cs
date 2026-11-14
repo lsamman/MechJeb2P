@@ -143,7 +143,7 @@ namespace MuMech
 
         public void LandSomewhere()
         {
-            Core.Landing.StopLanding();
+            Core.Landing.StopLanding("aborted from the Landing Guidance window");
             Core.Landing.LandUntargeted(this);
         }
 

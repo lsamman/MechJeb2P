@@ -221,6 +221,8 @@ namespace MuMech.UI
                 Layout capture = EditUi.Row(w, s, "#MechJeb_LG2P_CaptureSpeed", () => Landing?.CaptureSpeed, "m/s", 60); //Capture speed:
                 Tooltips.Add(capture.gameObject, "#MechJeb_LG2P_CaptureSpeed_tooltip");
                 EditUi.Row(w, s, "#MechJeb_LG2P_Tolerance", () => Landing?.HorizontalTolerance, "m", 60); //Centred within:
+                Layout fraction = EditUi.Row(w, s, "#MechJeb_LG2P_TerminalThrustFraction", () => Landing?.TerminalThrustFraction, "", 60); //Thrust left after the terminal engine switch:
+                Tooltips.Add(fraction.gameObject, "#MechJeb_LG2P_TerminalThrustFraction_tooltip");
                 Toggle hover = w.Toggle(s, "#MechJeb_LG2P_HoverAtCatch", () => Landing != null && Landing.HoverAtCatch, v => //Hover at the catch altitude
                 {
                     if (Landing != null) { Landing.HoverAtCatch = v; Landing.Dirty = true; }
@@ -249,6 +251,13 @@ namespace MuMech.UI
                 Layout braking = EditUi.Row(w, s, "#MechJeb_LG2P_BrakingTilt", () => Landing?.BrakingMaxTilt, "°", 60); //Braking burn max tilt:
                 Tooltips.Add(braking.gameObject, "#MechJeb_LG2P_BrakingTilt_tooltip");
 
+                // boostback
+                Layout flip = EditUi.Row(w, s, "#MechJeb_LG2P_FlipThrottle", () => Landing?.BoostbackFlipThrottle, "", 60); //Boostback flip throttle (0-0.5):
+                Tooltips.Add(flip.gameObject, "#MechJeb_LG2P_FlipThrottle_tooltip");
+                Layout drag = EditUi.Row(w, s, "#MechJeb_LG2P_BoostbackMaxDrag", () => Landing?.BoostbackMaxDrag, "m/s²", 60); //Boostback gives up above drag:
+                Tooltips.Add(drag.gameObject, "#MechJeb_LG2P_BoostbackMaxDrag_tooltip");
+                EditUi.Row(w, s, "#MechJeb_LG2P_BoostbackDoneMiss", () => Landing?.BoostbackDoneMiss, "m", 60); //Boostback done within:
+
                 // remote flight
                 Toggle remote = w.Toggle(s, "#MechJeb_LG2P_Remote", () => Landing != null && Landing.RemoteControl, v => //Keep flying when not focused
                 {
@@ -261,6 +270,17 @@ namespace MuMech.UI
                     if (Landing != null) { Landing.RemoteBlockWarp = v; Landing.Dirty = true; }
                 });
                 Tooltips.Add(KodeWindow.RowOf(warp), "#MechJeb_LG2P_RemoteBlockWarp_tooltip");
+
+                // flight log
+                Toggle log = w.Toggle(s, "#MechJeb_LG2P_FlightLog", () => Landing != null && Landing.FlightLog, v => //Write a flight log (Logs/MechJeb2P)
+                {
+                    if (Landing != null) { Landing.FlightLog = v; Landing.Dirty = true; }
+                });
+                Tooltips.Add(KodeWindow.RowOf(log), "#MechJeb_LG2P_FlightLog_tooltip");
+                string logFile = Localizer.Format("#MechJeb_LG2P_LogFile") + " "; //Log file:
+                UIText logLabel = w.BoundLabel(s, Memo.Of(() => Landing?.Log?.FileName ?? "", f => logFile + f), true);
+                w.Wrap(logLabel);
+                w.Visible(logLabel, () => Landing?.Log != null && Landing.Log.Open);
 
                 // presets
                 Layout presets = KodeWindow.Row(s);

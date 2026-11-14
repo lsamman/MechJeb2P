@@ -8,22 +8,35 @@ the Landing Guidance window, under two collapsible sections, and leaves every ot
 
 **Precision catch (2P)**
 
-- *Precision terminal guidance*: the standard final descent is replaced, from a chosen height above the catch point, by a
-  closed-loop controller that flies the vessel's lowest point onto the target coordinates at a *catch altitude*, slows to a
-  *capture speed*, and holds position there (hover) until KSP reports the vessel landed (resting in the tower's arms) or a
-  hover time limit runs out, after which it keeps sinking at the capture speed. Translation uses a limited thrust tilt
-  plus RCS; engines that cannot throttle down to a hover are pulsed.
-- *Catch point = here*: on the pad, sitting in the arms, one button takes the target coordinates, the catch altitude and
-  the catch heading from the vessel.
+- *Boostback*: in precision mode the standard course correction is replaced by a boostback step. A booster coming off its
+  ship turns around under a small throttle (the gimbals only have torque with thrust on; a booster has no RCS), opens the
+  throttle as the aim closes, and burns until the predicted landing site is within a set distance of the target. It only
+  stands down when the air gets thick (a setting), where MechJeb's own step gives up as soon as any drag appears.
+- *Precision terminal guidance*: the standard final descent is replaced, below a chosen height above the catch point and
+  once the braking still to do fits the engines, by a closed-loop controller that flies the vessel's lowest point onto the
+  target coordinates at a *catch altitude*, slows to a *capture speed*, holds position there (hover) for a time, then sinks
+  at the capture speed until something holds the vessel up. KSP only calls a vessel "landed" on terrain, so the catch is
+  detected as the vessel no longer sinking while asked to: the engines then go off, and are relit if it falls again.
+  Translation uses a limited thrust tilt (more to brake an incoming speed) plus RCS.
+- *Engine mode timing*: the braking phase's engine mode is selected when the coast to the braking burn begins, so the burn
+  is timed for the engines it will have; the terminal phase's mode (fewer engines) only once the remaining braking fits the
+  thrust that will be left (*Thrust left after terminal engine switch*).
+- *Catch point = here*: on the pad, one button takes the target coordinates, the catch altitude and the catch heading from
+  the vessel.
 - *Hold heading*: the vessel's top is kept on a compass heading during the terminal descent, so the catch pins face the arms.
 - *Aero steering*: during the atmospheric entry the vessel holds an angle of attack (up to a limit) toward the target, so
   body lift moves the predicted landing site. For vehicles entering engines-first.
 - *Braking burn max tilt*: the tilt the braking burn may use to steer the landing site is a setting (upstream: 5.7°).
 - *Keep flying when not focused*: switch to the tower, open the chopsticks, and the landing goes on. While a landing with
-  this option runs, the vessel and its target keep load and physics ranges of 100 km (configurable) instead of KSP's
-  2.25 km, so the focus switch is a plain one and the booster stays in physics. A rails time warp started from the other
-  vessel is dropped. A small **MechJeb2P remote landings** window shows the unfocused vessel's status with Abort and
-  Switch-to buttons, even on a vessel without MechJeb.
+  this option runs, the vessel, its target and the grounded vessels near the target (the tower) keep load ranges of 150 km
+  (configurable) instead of KSP's 2.25 km, and the flying vessel is never put on rails while loaded. A rails time warp
+  started from the other vessel is dropped, and so is a physics warp during the boostback burn or the precision descent.
+  A small **MechJeb2P remote landings** window shows the unfocused vessel's status with Abort and Switch-to buttons, even
+  on a vessel without MechJeb.
+- *Flight log*: each landing writes `Logs/MechJeb2P/<date>_<vessel>.csv` in the KSP folder, with the settings in force, a
+  telemetry row several times a second (every physics tick during the boostback burn and the precision descent) and an
+  event row for each step change, part option change, focus change and the reason the landing ended. Events also go to
+  `KSP.log` with a `[MechJeb2P]` prefix.
 - *SEP catch preset* fills all of the above (and the part options below) for a Starship Expansion Project catch;
   *Stock behaviour* turns 2P off again.
 
@@ -33,16 +46,18 @@ For each landing phase (entry, braking burn, terminal descent) the autopilot can
 them in the part windows: control surfaces' pitch / yaw / roll authority and deployment (grid fins, flaps, including the
 Starship Expansion Project's own control surfaces), engine gimbal pitch / yaw / roll and lock, RCS, SAS, a custom action
 group fired once, and an engine mode (the engineID of a SEP cluster mode such as `CenterThree`, or a stock multi-mode
-engine). The options the parts had before the landing are restored when it ends.
+engine). SEP's cluster modes are cumulative: `OuterTwenty` runs all 33 engines, `MiddleEight` the inner 13, `MiddleTwo`
+the inner 5, `CenterThree` the centre 3. The options the parts had before the landing are restored when it ends.
 
 ## Using it for a tower catch
 
 1. On the pad, with the booster in the arms: Landing Guidance → Precision catch (2P) → **SEP catch preset**, then
-   **Catch point = here**. Set the engine modes per phase under Part control if you want MechJeb to switch the cluster.
-2. Fly the ascent and separation as usual. On the booster, set the target (the catch point is remembered per vessel type)
-   and press **Land at target**.
+   **Catch point = here**. Check the engine modes per phase under Part control (the preset sets the BL-3 booster's).
+2. Fly the ascent and separation as usual. On the booster, with the catch point as the target, press **Land at target**
+   as soon as it is free of the ship: the boostback starts at once.
 3. Switch to the tower (`[` / `]`), work the chopsticks, and watch. The remote window shows the booster's status.
-4. The booster hovers at the catch altitude until the arms hold it (or the hover time limit passes).
+4. The booster hovers at the catch altitude, then sinks until the arms hold it and the engines go off.
+5. If anything went wrong, the flight log in `Logs/MechJeb2P/` says what the autopilot saw and did.
 
 ## Building
 
